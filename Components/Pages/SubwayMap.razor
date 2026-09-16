@@ -1,0 +1,214 @@
+@page "/"
+@rendermode InteractiveServer
+
+<PageTitle>NY & NJ Trains Live</PageTitle>
+
+<div class="map-shell">
+    <div id="subway-map" class="subway-map-full"></div>
+    <div class="map-shell-vignette" aria-hidden="true"></div>
+</div>
+
+@if (!_panelOpen)
+{
+    <button type="button" class="panel-fab" @onclick="OpenPanel" aria-label="Open menu">
+        <span class="panel-fab-mark" aria-hidden="true">LIVE</span>
+        <span>Menu</span>
+        @if (_trains.Count > 0)
+        {
+            <span class="panel-fab-badge">@MapTrains.Count</span>
+        }
+    </button>
+}
+
+<aside class="train-panel subway-panel @(_panelOpen ? "" : "train-panel--hidden")" aria-label="Train map menu">
+    <div class="panel-sheet-handle" aria-hidden="true"></div>
+    <div class="subway-panel-band">
+        <div class="subway-panel-band-top">
+            <span class="subway-mta-mark">NY · NJ</span>
+            <button type="button" class="panel-icon-btn panel-icon-btn--on-dark" title="Close" aria-label="Close" @onclick="ClosePanel">✕</button>
+        </div>
+        <h1 class="subway-panel-headline">Live map</h1>
+        <p class="subway-panel-tagline">
+            @if (_loading && _trains.Count == 0)
+            {
+                @:Loading…
+            }
+            else
+            {
+                @:<strong>@MapTrains.Count</strong> on map
+                @if (NjTrainCount > 0)
+                {
+                    @: · @NjTrainCount NJ
+                }
+            }
+        </p>
+    </div>
+
+    <div class="trip-planner">
+        <h3 class="result-section-title">Plan a trip</h3>
+        @if (NjStationCount == 0)
+        {
+            <p class="result-empty">NJ Rail stations missing from data files — rebuild with scripts/build-njt-rail-geojson.py.</p>
+        }
+        <div class="trip-planner-row">
+            <label class="trip-planner-field">
+                <span class="trip-planner-label">From</span>
+                <select class="trip-planner-select" @bind="_fromStationKey">
+                    <option value="">Choose station…</option>
+                    <optgroup label="Subway">
+                        @foreach (var s in MtaStations)
+                        {
+                            <option value="@s.Key">@s.Name</option>
+                        }
+                    </optgroup>
+                    <optgroup label="NJ Rail">
+                        @foreach (var s in NjStations)
+                        {
+                            <option value="@s.Key">@s.Name</option>
+                        }
+                    </optgroup>
+                </select>
+            </label>
+            <button type="button" class="trip-planner-swap" title="Swap from and to" aria-label="Swap" @onclick="SwapPlanStations">⇅</button>
+            <label class="trip-planner-field">
+                <span class="trip-planner-label">To</span>
+                <select class="trip-planner-select" @bind="_toStationKey">
+                    <option value="">Choose station…</option>
+                    <optgroup label="Subway">
+                        @foreach (var s in MtaStations)
+                        {
+                            <option value="@s.Key">@s.Name</option>
+                        }
+                    </optgroup>
+                    <optgroup label="NJ Rail">
+                        @foreach (var s in NjStations)
+                        {
+                            <option value="@s.Key">@s.Name</option>
+                        }
+                    </optgroup>
+                </select>
+            </label>
+        </div>
+        <div class="trip-planner-actions">
+            <button type="button" class="panel-toolbar-btn panel-toolbar-btn--sm" @onclick="PlanTripAsync">Show route</button>
+            @if (_plannedRoute is not null || !string.IsNullOrEmpty(_fromStationKey))
+            {
+                <button type="button" class="panel-toolbar-btn panel-toolbar-btn--sm panel-toolbar-btn--ghost" @onclick="ClearPlanAsync">Clear route</button>
+            }
+        </div>
+        @if (!string.IsNullOrEmpty(_planError))
+        {
+            <p class="result-empty">@_planError</p>
+        }
+        @if (_plannedRoute is not null)
+        {
+            <ol class="trip-steps">
+                @foreach (var step in _plannedRoute.Steps)
+                {
+                    <li class="trip-step trip-step--@step.Kind">
+                        @if (step.Kind == "ride" && !string.IsNullOrEmpty(step.Route))
+                        {
+                            <span class="trip-step-badge" style="background:@step.Color">@step.Route</span>
+                        }
+                        else
+                        {
+                            <span class="trip-step-badge trip-step-badge--walk">Walk</span>
+                        }
+                        <span class="trip-step-text">
+                            @step.FromName
+                            @if (!step.FromName.Equals(step.ToName, StringComparison.Ordinal))
+                            {
+                                <span aria-hidden="true"> → </span>
+                                @step.ToName
+                            }
+                        </span>
+                    </li>
+                }
+            </ol>
+        }
+    </div>
+
+    <div class="scope-chips scope-chips--panel" role="group" aria-label="Map filter">
+        <button type="button" class="scope-chip @(_scope == SearchScope.All ? "scope-chip--on" : "")"
+                @onclick="() => SetScopeAsync(SearchScope.All)">All</button>
+        <button type="button" class="scope-chip @(_scope == SearchScope.Subway ? "scope-chip--on" : "")"
+                @onclick="() => SetScopeAsync(SearchScope.Subway)">Subway</button>
+        <button type="button" class="scope-chip @(_scope == SearchScope.NjRail ? "scope-chip--on" : "")"
+                @onclick="() => SetScopeAsync(SearchScope.NjRail)">
+            NJ Rail
+            @if (NjTrainCount > 0)
+            {
+                <span class="scope-chip-count">@NjTrainCount</span>
+            }
+        </button>
+        <button type="button" class="scope-chip @(_movingOnly ? "scope-chip--on" : "")"
+                aria-pressed="@_movingOnly" @onclick="ToggleMovingOnlyAsync">Moving</button>
+    </div>
+
+    <div class="panel-toolbar panel-toolbar--compact">
+        <button type="button" class="panel-toolbar-btn panel-toolbar-btn--sm" disabled="@_loading" @onclick="ManualRefreshAsync">
+            @(_loading ? "…" : "Refresh")
+        </button>
+        <button type="button" class="panel-toolbar-btn panel-toolbar-btn--sm panel-toolbar-btn--ghost" @onclick="ResetMapAsync">Map</button>
+    </div>
+
+    <section class="train-panel-section train-panel-section--grow" aria-label="Live trains">
+        <h3 class="result-section-title">Live trains</h3>
+        @if (_loading && _trains.Count == 0)
+        {
+            <div class="train-list-skeleton" aria-hidden="true">
+                @for (var i = 0; i < 4; i++)
+                {
+                    <div class="train-list-skeleton-row"></div>
+                }
+            </div>
+        }
+        else if (LiveTrains.Count == 0)
+        {
+            <p class="result-empty">No trains match this filter.</p>
+        }
+        else
+        {
+            <div class="train-list">
+                @foreach (var train in LiveTrains)
+                {
+                    <button type="button" class="train-list-row" style="--line-color:@train.Color"
+                            @onclick="() => FocusTrainAsync(train.Id)">
+                        <span class="train-list-badge @(IsLightRouteBadge(train.Route) ? "train-list-badge--dark-text" : "") @(train.Route.Length > 2 ? "train-list-badge--wide" : "")">@train.Route</span>
+                        <span class="train-list-body">
+                            <span class="train-list-primary">@FormatStop(train)</span>
+                            <span class="train-list-secondary">
+                                @train.Status
+                                @if (!string.IsNullOrWhiteSpace(train.TrainNumber))
+                                {
+                                    <span class="train-list-secondary-dot" aria-hidden="true">·</span>
+                                    <span>#@train.TrainNumber</span>
+                                }
+                            </span>
+                        </span>
+                        @if (train.InMotion)
+                        {
+                            <span class="train-list-motion" title="Moving"></span>
+                        }
+                    </button>
+                }
+            </div>
+            @if (LiveTrains.Count >= 80)
+            {
+                <p class="train-panel-more">Showing @LiveTrains.Count trains — narrow with filters above.</p>
+            }
+        }
+    </section>
+
+    <footer class="train-panel-footer">
+        Last refresh @_updatedText
+    </footer>
+</aside>
+
+@if (!string.IsNullOrEmpty(_error))
+{
+    <div class="map-error-toast" role="alert">
+        @_error
+        <button type="button" class="map-error-dismiss" @onclick="() => _error = null">OK</button>
+    </div>
+}
