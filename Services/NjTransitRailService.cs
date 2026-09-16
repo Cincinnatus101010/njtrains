@@ -17,6 +17,8 @@ public sealed class NjTransitRailService(
 {
     private readonly NjTransitOptions _options = options.Value;
 
+    public string? LastTokenIssue => tokens.LastError;
+
     public async Task<IReadOnlyList<SubwayMapMarker>> GetLiveTrainsAsync(CancellationToken cancellationToken = default)
     {
         if (!_options.IsConfigured)
@@ -27,7 +29,11 @@ public sealed class NjTransitRailService(
         var token = await tokens.GetTokenAsync(cancellationToken);
         if (string.IsNullOrWhiteSpace(token))
         {
-            log.LogWarning("NJ Transit: no token (check user secrets / NjTransit credentials).");
+            if (!string.IsNullOrWhiteSpace(tokens.LastError))
+            {
+                log.LogDebug("NJ Transit: no token ({Reason}).", tokens.LastError);
+            }
+
             return [];
         }
 

@@ -5,6 +5,14 @@ using NjTrains.Web.Services;
 
 var builder = WebApplication.CreateBuilder(args);
 
+if (builder.Environment.IsDevelopment())
+{
+    builder.Configuration.AddJsonFile(
+        "appsettings.Development.local.json",
+        optional: true,
+        reloadOnChange: true);
+}
+
 builder.Services.Configure<MtaOptions>(options =>
 {
     builder.Configuration.GetSection(MtaOptions.SectionName).Bind(options);

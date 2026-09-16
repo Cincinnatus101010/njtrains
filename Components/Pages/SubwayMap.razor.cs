@@ -249,9 +249,14 @@ public partial class SubwayMap : IAsyncDisposable
             _trains.AddRange(njt);
             _updatedText = DateTime.Now.ToString("t");
 
-            if (njt.Count == 0 && NjRailConfigured() && mta.Count > 0)
+            if (njt.Count == 0 && NjRailConfigured())
             {
-                _error = "NJ Transit feed empty — verify portal credentials in user secrets, then Refresh.";
+                var tokenIssue = NjRail.LastTokenIssue;
+                _error = tokenIssue?.Contains("Daily usage limit", StringComparison.OrdinalIgnoreCase) == true
+                    ? "NJ Transit token limit hit for today (10/day). Trains return tomorrow, or use a cached token after one successful login."
+                    : !string.IsNullOrWhiteSpace(tokenIssue)
+                        ? $"NJ Transit: {tokenIssue}"
+                        : "NJ Transit feed empty — check RailData credentials or try Refresh later.";
             }
             else if (njt.Count > 0 || !NjRailConfigured())
             {

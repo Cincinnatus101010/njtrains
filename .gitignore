@@ -9,4 +9,5 @@ obj/
 appsettings.Development.local.json
 appsettings.*.local.json
 **/secrets.json
+Data/.raildata-token.json
 .DS_Store
