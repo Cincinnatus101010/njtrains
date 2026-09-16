@@ -9,6 +9,35 @@ Portfolio project: a single-page **live map** of NYC Subway and NJ Transit rail 
 - Track geometry and station layers from bundled GeoJSON
 - Trip planning via a prebuilt station graph (`Data/transit-graph.json`)
 - Mobile-friendly slide-up panel
+- Staggered polling: subway ~every 5s, NJ Rail ~every 20s (manual refresh updates both)
+
+## Architecture
+
+```mermaid
+flowchart LR
+  subgraph MTA
+    F[GTFS-realtime protobuf feeds]
+    F --> C[MtaFeedCache]
+    C --> S[MtaSubwayService]
+  end
+  subgraph NJT
+    T[RailDataTokenService\n disk cache + daily limit backoff]
+    T --> V[getVehicleData]
+    V --> N[NjTransitRailService]
+  end
+  S --> B[Blazor SubwayMap]
+  N --> B
+  B -->|SignalR + JSON| M[subway-map.js / MapLibre]
+  G[(GeoJSON tracks + stops\ntransit-graph.json)] --> M
+  G --> P[TripPlannerService]
+  P --> B
+```
+
+**MTA path:** `MtaFeedUrls` → cached protobuf → stop lookup → live markers.
+
+**NJ path:** `getToken` (≤10/day) → cached token → `getVehicleData` → route mapping → markers.
+
+**UI:** Blazor Server pushes marker updates to MapLibre; trip routes are drawn client-side from planner coordinates.
 
 ## Run locally
 

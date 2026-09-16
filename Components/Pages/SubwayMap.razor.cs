@@ -26,6 +26,9 @@ public partial class SubwayMap : IAsyncDisposable
     private string? _error;
     private string _updatedText = "—";
     private readonly List<SubwayMapMarker> _trains = [];
+    private readonly List<SubwayMapMarker> _mtaTrains = [];
+    private readonly List<SubwayMapMarker> _njTrains = [];
+    private DateTimeOffset _lastNjRefresh = DateTimeOffset.MinValue;
     private PeriodicTimer? _timer;
     private CancellationTokenSource? _refreshCts;
     private readonly SemaphoreSlim _refreshLock = new(1, 1);
@@ -34,7 +37,8 @@ public partial class SubwayMap : IAsyncDisposable
     private PlannedRoute? _plannedRoute;
     private string? _planError;
 
-    private static readonly TimeSpan AutoRefreshInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan MtaRefreshInterval = TimeSpan.FromSeconds(5);
+    private static readonly TimeSpan NjRefreshInterval = TimeSpan.FromSeconds(20);
 
     private IReadOnlyList<MapStation>? _mtaStations;
     private IReadOnlyList<MapStation>? _njtStations;
@@ -123,7 +127,7 @@ public partial class SubwayMap : IAsyncDisposable
 
     private async Task RunAutoRefreshAsync(CancellationToken cancellationToken)
     {
-        _timer = new PeriodicTimer(AutoRefreshInterval);
+        _timer = new PeriodicTimer(MtaRefreshInterval);
         try
         {
             while (await _timer.WaitForNextTickAsync(cancellationToken))
@@ -242,29 +246,44 @@ public partial class SubwayMap : IAsyncDisposable
 
         try
         {
-            var mta = await Subway.GetLiveTrainsAsync();
-            var njt = await NjRail.GetLiveTrainsAsync();
-            _trains.Clear();
-            _trains.AddRange(mta);
-            _trains.AddRange(njt);
-            _updatedText = DateTime.Now.ToString("t");
+            var fetchNj = userInitiated
+                || NjRailConfigured() && DateTimeOffset.UtcNow - _lastNjRefresh >= NjRefreshInterval;
 
-            if (njt.Count == 0 && NjRailConfigured())
+            var mta = await Subway.GetLiveTrainsAsync();
+            _mtaTrains.Clear();
+            _mtaTrains.AddRange(mta);
+
+            IReadOnlyList<SubwayMapMarker> njt = _njTrains;
+            if (fetchNj && NjRailConfigured())
             {
-                var tokenIssue = NjRail.LastTokenIssue;
-                _error = tokenIssue?.Contains("Daily usage limit", StringComparison.OrdinalIgnoreCase) == true
-                    ? "NJ Transit token limit hit for today (10/day). Trains return tomorrow, or use a cached token after one successful login."
-                    : !string.IsNullOrWhiteSpace(tokenIssue)
-                        ? $"NJ Transit: {tokenIssue}"
-                        : "NJ Transit feed empty — check RailData credentials or try Refresh later.";
-            }
-            else if (njt.Count > 0 || !NjRailConfigured())
-            {
-                if (_error?.Contains("NJ Transit", StringComparison.OrdinalIgnoreCase) == true)
+                njt = await NjRail.GetLiveTrainsAsync();
+                _njTrains.Clear();
+                _njTrains.AddRange(njt);
+                _lastNjRefresh = DateTimeOffset.UtcNow;
+
+                if (njt.Count == 0)
+                {
+                    var tokenIssue = NjRail.LastTokenIssue;
+                    _error = tokenIssue?.Contains("Daily usage limit", StringComparison.OrdinalIgnoreCase) == true
+                        ? "NJ Transit token limit hit for today (10/day). Trains return tomorrow, or use a cached token after one successful login."
+                        : !string.IsNullOrWhiteSpace(tokenIssue)
+                            ? $"NJ Transit: {tokenIssue}"
+                            : "NJ Transit feed empty — check RailData credentials or try Refresh later.";
+                }
+                else if (_error?.Contains("NJ Transit", StringComparison.OrdinalIgnoreCase) == true)
                 {
                     _error = null;
                 }
             }
+            else if (!NjRailConfigured() && _error?.Contains("NJ Transit", StringComparison.OrdinalIgnoreCase) == true)
+            {
+                _error = null;
+            }
+
+            _trains.Clear();
+            _trains.AddRange(_mtaTrains);
+            _trains.AddRange(_njTrains);
+            _updatedText = DateTime.Now.ToString("t");
 
             await PushMapMarkersAsync();
         }
